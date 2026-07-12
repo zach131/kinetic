@@ -1,4 +1,3 @@
-// app/api/auth/[...nextauth]/route.ts
 import NextAuth, { AuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
@@ -10,7 +9,7 @@ export const authOptions: AuthOptions = {
       authorization: {
         params: {
           scope:
-            "openid email profile https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly https://www.googleapis.com/auth/googlehealth.sleep.readonly https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+            "openid email profile https://www.googleapis.com/auth/fitness.activity.read https://www.googleapis.com/auth/fitness.body.read https://www.googleapis.com/auth/fitness.heart_rate.read https://www.googleapis.com/auth/fitness.sleep.read",
           access_type: "offline",
           prompt: "consent",
         },
@@ -23,7 +22,6 @@ export const authOptions: AuthOptions = {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
       }
-      // Use Google's subject ID as the unique user ID
       if (profile?.sub) {
         token.userId = profile.sub;
       } else if (user?.id) {
@@ -33,7 +31,6 @@ export const authOptions: AuthOptions = {
     },
     async session({ session, token }: any) {
       session.accessToken = token.accessToken;
-      session.refreshToken = token.refreshToken;
       session.userId = token.userId;
       return session;
     },
