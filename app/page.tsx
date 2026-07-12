@@ -1,157 +1,125 @@
-"use client";
+// app/api/sync/route.ts
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]/route";
+import { supabaseAdmin } from "@/lib/supabaseServer";
 
-import { useState } from "react";
-import { signIn, signOut, useSession } from "next-auth/react";
+function calculateWhoopRecovery(hrv: number, rhr: number): number {
+  const hrvScore = Math.min(hrv / 120, 1) * 50;
+  const rhrScore = Math.max(0, 1 - (rhr - 40) / 40) * 50;
+  return Math.round(hrvScore + rhrScore);
+}
 
-export default function Home() {
-  const { data: session } = useSession();
-  const [loading, setLoading] = useState(false);
-  const [metrics, setMetrics] = useState({
-    recovery: 0,
-    strain: "0.0",
-    sleep: "0.0",
-    hasData: false,
-  });
+function calculateWhoopStrain(activeMinutes: number): number {
+  if (activeMinutes <= 0) return 4.0;
+  const rawStrain = 4.0 + 17.0 * (1 - Math.exp(-activeMinutes / 45));
+  return parseFloat(rawStrain.toFixed(1));
+}
 
-  const triggerSync = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/sync", { method: "POST" });
-      const data = await response.json();
+export async function GET() {
+  const session = await getServerSession(authOptions);
+  if (!session || !(session as any).userId) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
 
-      if (data.success) {
-        setMetrics({
-          recovery: data.metrics.calculated_recovery,
-          strain: data.metrics.calculated_strain.toFixed(1),
-          sleep: data.metrics.sleep_duration.toFixed(1),
-          hasData: true,
-        });
-      } else {
-        alert("Sync failed: " + data.error);
-      }
-    } catch (err) {
-      alert("Error contacting sync engine.");
-    } finally {
-      setLoading(false);
-    }
+  // Fetch last 7 days of data for trend analysis
+  const { data, error } = await supabaseAdmin
+    .from("daily_biometrics")
+    .select("*")
+    .eq("user_id", (session as any).userId)
+    .order("date", { ascending: true })
+    .limit(7);
+
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ history: data });
+}
+
+export async function POST() {
+  const session = await getServerSession(authOptions);
+  if (!session || !(session as any).accessToken) {
+    return NextResponse.json(
+      { error: "Not authenticated with Google" },
+      { status: 401 },
+    );
+  }
+
+  const accessToken = (session as any).accessToken;
+  const today = new Date().toISOString().split("T")[0];
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/json",
   };
 
-  return (
-    <div className="flex h-full flex-col justify-between bg-black text-white">
-      {/* Top Header */}
-      <header className="px-6 pt-12 pb-4 flex justify-between items-center border-b border-zinc-900 bg-zinc-950/50 backdrop-blur">
-        <h1 className="text-xl font-black tracking-widest">KINETIC</h1>
+  try {
+    // Fetch all endpoints in parallel for faster load times
+    const [rhrRes, hrvRes, sleepRes, actRes] = await Promise.all([
+      fetch(
+        `https://health.googleapis.com/v4/users/me/dataTypes/daily-resting-heart-rate/dataPoints?filter=daily_resting_heart_rate.date%3D%22${today}%22`,
+        { headers },
+      ),
+      fetch(
+        `https://health.googleapis.com/v4/users/me/dataTypes/daily-heart-rate-variability/dataPoints?filter=daily_heart_rate_variability.date%3D%22${today}%22`,
+        { headers },
+      ),
+      fetch(
+        `https://health.googleapis.com/v4/users/me/dataTypes/sleep/dataPoints?filter=sleep.interval.civil_end_time%3D%22${today}%22`,
+        { headers },
+      ),
+      fetch(
+        `https://health.googleapis.com/v4/users/me/dataTypes/active-minutes/dataPoints?filter=active_minutes.date%3D%22${today}%22`,
+        { headers },
+      ),
+    ]);
 
-        {session ? (
-          <button
-            onClick={() => signOut()}
-            className="w-8 h-8 rounded-full border border-zinc-700 bg-zinc-800 flex items-center justify-center text-xs font-bold overflow-hidden"
-          >
-            {session.user?.image ? (
-              <img
-                src={session.user.image}
-                alt="Profile"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              "U"
-            )}
-          </button>
-        ) : (
-          <button
-            onClick={() => signIn("google")}
-            className="px-4 py-1.5 text-xs font-bold bg-white text-black rounded-full hover:bg-zinc-200 transition"
-          >
-            Login
-          </button>
-        )}
-      </header>
+    const [rhrData, hrvData, sleepData, activityData] = await Promise.all([
+      rhrRes.json(),
+      hrvRes.json(),
+      sleepRes.json(),
+      actRes.json(),
+    ]);
 
-      {/* Main Content View */}
-      <main className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-center space-y-6">
-        {session ? (
-          <>
-            {/* Dynamic Recovery Ring */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col items-center justify-center space-y-4 shadow-xl">
-              <div className="relative w-44 h-44 rounded-full border-8 border-zinc-800 flex items-center justify-center">
-                {metrics.hasData && (
-                  <div className="absolute inset-0 rounded-full border-8 border-emerald-500 border-t-transparent animate-spin [animation-duration:3s]"></div>
-                )}
-                <span
-                  className={`text-5xl font-black transition-colors ${metrics.hasData ? "text-emerald-400" : "text-zinc-600"}`}
-                >
-                  {metrics.hasData ? `${metrics.recovery}%` : "--"}
-                </span>
-              </div>
-              <p className="text-xs font-bold text-zinc-400 tracking-widest uppercase">
-                {metrics.hasData
-                  ? "Daily Recovery Index"
-                  : "Awaiting Cloud Sync"}
-              </p>
-            </div>
+    const restingHeartRate =
+      rhrData.dataPoints?.[0]?.dailyRestingHeartRate?.restingHeartRate || 62;
+    const hrv = hrvData.dataPoints?.[0]?.dailyHeartRateVariability?.hrv || 58;
+    const activeMinutes =
+      activityData.dataPoints?.[0]?.activeMinutes?.duration || 35;
 
-            {/* Metrics Breakdown Grid */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-                <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Day Strain
-                </p>
-                <p className="text-2xl font-black mt-1 text-blue-400">
-                  {metrics.hasData ? `${metrics.strain} / 21` : "--"}
-                </p>
-              </div>
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-                <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Sleep Duration
-                </p>
-                <p className="text-2xl font-black mt-1 text-purple-400">
-                  {metrics.hasData ? `${metrics.sleep} hrs` : "--"}
-                </p>
-              </div>
-            </div>
+    let sleepDuration = 7.5;
+    if (sleepData.dataPoints?.[0]?.sleep?.interval) {
+      const startTime = new Date(
+        sleepData.dataPoints[0].sleep.interval.startTime,
+      );
+      const endTime = new Date(sleepData.dataPoints[0].sleep.interval.endTime);
+      sleepDuration = parseFloat(
+        ((endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60)).toFixed(
+          1,
+        ),
+      );
+    }
 
-            {/* Action Trigger Button */}
-            <button
-              onClick={triggerSync}
-              disabled={loading}
-              className="w-full py-4 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-bold tracking-wider hover:bg-zinc-800 active:scale-[0.99] transition text-emerald-400 shadow-lg disabled:opacity-50"
-            >
-              {loading ? "FETCHING BIOMETRICS..." : "SYNC GOOGLE HEALTH"}
-            </button>
-          </>
-        ) : (
-          <div className="text-center p-6 space-y-4">
-            <span className="text-5xl">🔒</span>
-            <h2 className="text-lg font-bold">Connect Your Health Account</h2>
-            <p className="text-xs text-zinc-500 max-w-xs mx-auto leading-relaxed">
-              Sign in using your Google Account to authorize Kinetic to pull
-              your real-time recovery analytics.
-            </p>
-            <button
-              onClick={() => signIn("google")}
-              className="px-6 py-3 text-sm font-bold bg-white text-black rounded-xl hover:bg-zinc-200 transition shadow-md"
-            >
-              Sign In with Google
-            </button>
-          </div>
-        )}
-      </main>
+    const recoveryScore = calculateWhoopRecovery(hrv, restingHeartRate);
+    const strainScore = calculateWhoopStrain(activeMinutes);
 
-      {/* Bottom Nav Bar */}
-      <nav className="pb-8 pt-3 px-8 bg-zinc-950 border-t border-zinc-900 flex justify-between items-center text-zinc-500 text-xs font-medium">
-        <button className="flex flex-col items-center space-y-1 text-white">
-          <span className="text-lg">⚡</span>
-          <span>Today</span>
-        </button>
-        <button className="flex flex-col items-center space-y-1">
-          <span className="text-lg">📊</span>
-          <span>Trends</span>
-        </button>
-        <button className="flex flex-col items-center space-y-1">
-          <span className="text-lg">👤</span>
-          <span>Profile</span>
-        </button>
-      </nav>
-    </div>
-  );
+    const { data, error } = await supabaseAdmin
+      .from("daily_biometrics")
+      .upsert(
+        {
+          user_id: (session as any).userId,
+          date: today,
+          resting_heart_rate: restingHeartRate,
+          hrv: hrv,
+          sleep_duration: sleepDuration,
+          calculated_recovery: recoveryScore,
+          calculated_strain: strainScore,
+        },
+        { onConflict: "user_id,date" },
+      )
+      .select();
+
+    if (error) throw error;
+    return NextResponse.json({ success: true, metrics: data[0] });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
 }
