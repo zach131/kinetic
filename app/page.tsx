@@ -1,65 +1,157 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 export default function Home() {
+  const { data: session } = useSession();
+  const [loading, setLoading] = useState(false);
+  const [metrics, setMetrics] = useState({
+    recovery: 0,
+    strain: "0.0",
+    sleep: "0.0",
+    hasData: false,
+  });
+
+  const triggerSync = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/sync", { method: "POST" });
+      const data = await response.json();
+
+      if (data.success) {
+        setMetrics({
+          recovery: data.metrics.calculated_recovery,
+          strain: data.metrics.calculated_strain.toFixed(1),
+          sleep: data.metrics.sleep_duration.toFixed(1),
+          hasData: true,
+        });
+      } else {
+        alert("Sync failed: " + data.error);
+      }
+    } catch (err) {
+      alert("Error contacting sync engine.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="flex h-full flex-col justify-between bg-black text-white">
+      {/* Top Header */}
+      <header className="px-6 pt-12 pb-4 flex justify-between items-center border-b border-zinc-900 bg-zinc-950/50 backdrop-blur">
+        <h1 className="text-xl font-black tracking-widest">KINETIC</h1>
+
+        {session ? (
+          <button
+            onClick={() => signOut()}
+            className="w-8 h-8 rounded-full border border-zinc-700 bg-zinc-800 flex items-center justify-center text-xs font-bold overflow-hidden"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            {session.user?.image ? (
+              <img
+                src={session.user.image}
+                alt="Profile"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              "U"
+            )}
+          </button>
+        ) : (
+          <button
+            onClick={() => signIn("google")}
+            className="px-4 py-1.5 text-xs font-bold bg-white text-black rounded-full hover:bg-zinc-200 transition"
           >
-            Documentation
-          </a>
-        </div>
+            Login
+          </button>
+        )}
+      </header>
+
+      {/* Main Content View */}
+      <main className="flex-1 overflow-y-auto px-6 py-6 flex flex-col justify-center space-y-6">
+        {session ? (
+          <>
+            {/* Dynamic Recovery Ring */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col items-center justify-center space-y-4 shadow-xl">
+              <div className="relative w-44 h-44 rounded-full border-8 border-zinc-800 flex items-center justify-center">
+                {metrics.hasData && (
+                  <div className="absolute inset-0 rounded-full border-8 border-emerald-500 border-t-transparent animate-spin [animation-duration:3s]"></div>
+                )}
+                <span
+                  className={`text-5xl font-black transition-colors ${metrics.hasData ? "text-emerald-400" : "text-zinc-600"}`}
+                >
+                  {metrics.hasData ? `${metrics.recovery}%` : "--"}
+                </span>
+              </div>
+              <p className="text-xs font-bold text-zinc-400 tracking-widest uppercase">
+                {metrics.hasData
+                  ? "Daily Recovery Index"
+                  : "Awaiting Cloud Sync"}
+              </p>
+            </div>
+
+            {/* Metrics Breakdown Grid */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+                <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  Day Strain
+                </p>
+                <p className="text-2xl font-black mt-1 text-blue-400">
+                  {metrics.hasData ? `${metrics.strain} / 21` : "--"}
+                </p>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+                <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  Sleep Duration
+                </p>
+                <p className="text-2xl font-black mt-1 text-purple-400">
+                  {metrics.hasData ? `${metrics.sleep} hrs` : "--"}
+                </p>
+              </div>
+            </div>
+
+            {/* Action Trigger Button */}
+            <button
+              onClick={triggerSync}
+              disabled={loading}
+              className="w-full py-4 bg-zinc-900 border border-zinc-800 rounded-2xl text-sm font-bold tracking-wider hover:bg-zinc-800 active:scale-[0.99] transition text-emerald-400 shadow-lg disabled:opacity-50"
+            >
+              {loading ? "FETCHING BIOMETRICS..." : "SYNC GOOGLE HEALTH"}
+            </button>
+          </>
+        ) : (
+          <div className="text-center p-6 space-y-4">
+            <span className="text-5xl">🔒</span>
+            <h2 className="text-lg font-bold">Connect Your Health Account</h2>
+            <p className="text-xs text-zinc-500 max-w-xs mx-auto leading-relaxed">
+              Sign in using your Google Account to authorize Kinetic to pull
+              your real-time recovery analytics.
+            </p>
+            <button
+              onClick={() => signIn("google")}
+              className="px-6 py-3 text-sm font-bold bg-white text-black rounded-xl hover:bg-zinc-200 transition shadow-md"
+            >
+              Sign In with Google
+            </button>
+          </div>
+        )}
       </main>
+
+      {/* Bottom Nav Bar */}
+      <nav className="pb-8 pt-3 px-8 bg-zinc-950 border-t border-zinc-900 flex justify-between items-center text-zinc-500 text-xs font-medium">
+        <button className="flex flex-col items-center space-y-1 text-white">
+          <span className="text-lg">⚡</span>
+          <span>Today</span>
+        </button>
+        <button className="flex flex-col items-center space-y-1">
+          <span className="text-lg">📊</span>
+          <span>Trends</span>
+        </button>
+        <button className="flex flex-col items-center space-y-1">
+          <span className="text-lg">👤</span>
+          <span>Profile</span>
+        </button>
+      </nav>
     </div>
   );
 }
